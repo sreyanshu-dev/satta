@@ -3,16 +3,13 @@ import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# === CONFIG ===
 ADMIN_IDS = [6293126201 , 5460768109]
 BOT_TOKEN = "ABCD"
 DATA_FILE = "match_data.json"
 
-# === LOGGING ===
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# === STORAGE ===
 try:
     with open(DATA_FILE, "r") as f:
         db = json.load(f)
@@ -28,14 +25,11 @@ def save_db():
     with open(DATA_FILE, "w") as f:
         json.dump(db, f)
 
-# === LOCK DICT ===
 locked_matches = {}
 
-# === ADMIN CHECK ===
 def is_admin(user_id):
     return user_id in ADMIN_IDS
 
-# === USER HELP COMMAND ===
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "User Commands\n\n"
@@ -52,7 +46,6 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(help_text)
 
-# === ADMIN HELP COMMAND ===
 async def admhelp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("❌ You are not authorized to use this command.")
@@ -72,7 +65,6 @@ async def admhelp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(help_text)
     
-# === USER COMMANDS ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await update.message.reply_text(
@@ -123,7 +115,6 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 msg += f"- {p}{role}\n"
             msg += "\n"
     
-    # Bets section
     if user_id not in db["amounts"] or not db["amounts"][user_id]:
         msg += "No bets placed yet.\n"
     else:
@@ -443,8 +434,7 @@ async def user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("Add Bet", callback_data=f"addamount::{match}")]
         ]
         await query.edit_message_text(f"Match: {match}", reply_markup=InlineKeyboardMarkup(keyboard))
-
-# === MAIN FUNCTION ===
+        
 def main():
     application = Application.builder().token(BOT_TOKEN).build()
 
