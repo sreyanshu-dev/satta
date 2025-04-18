@@ -3,8 +3,8 @@ import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
-ADMIN_IDS = [6293126201 , 5460768109]
-BOT_TOKEN = "ABCD"
+ADMIN_IDS = [6293126201 , 5460768109, 5220416927]
+BOT_TOKEN = "8024871818:AAESCQL7bn2EI_T7tGV-7vaxpJafjz8Jhd0"
 DATA_FILE = "match_data.json"
 
 logging.basicConfig(level=logging.INFO)
