@@ -2,18 +2,22 @@ import logging
 import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.error import TelegramError
 
-ADMIN_IDS = [6293126201 , 5460768109, 5220416927]
+# Configuration
+ADMIN_IDS = [6293126201, 5460768109, 5220416927]
 BOT_TOKEN = "8024871818:AAESCQL7bn2EI_T7tGV-7vaxpJafjz8Jhd0"
 DATA_FILE = "match_data.json"
 
+# Logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Load or initialize database
 try:
     with open(DATA_FILE, "r") as f:
         db = json.load(f)
-except:
+except FileNotFoundError:
     db = {
         "matches": {},
         "user_teams": {},
@@ -22,21 +26,35 @@ except:
     }
 
 def save_db():
-    with open(DATA_FILE, "w") as f:
-        json.dump(db, f)
+    """Save the database to the JSON file."""
+    try:
+        with open(DATA_FILE, "w") as f:
+            json.dump(db, f)
+    except Exception as e:
+        logger.error(f"Failed to save database: {e}")
 
 locked_matches = {}
 
 def is_admin(user_id):
+    """Check if the user is an admin."""
     return user_id in ADMIN_IDS
 
+# === USER COMMANDS ===
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Welcome message for users."""
+    user = update.effective_user
+    await update.message.reply_text(
+        f"Hello {user.first_name}, welcome to the Cricket Team Selection Bot! "
+        f"Use /schedule to get started, /profile to view your bets, or /help for commands."
+    )
+
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Display user commands."""
     help_text = (
         "User Commands\n\n"
         "Here are the commands you can use:\n"
         "/start - Start the bot and get a welcome message.\n"
         "/schedule - View available matches and select one to create/edit a team or place a bet.\n"
-        "/team - Same as /schedule, view and manage your teams.\n"
         "/editteam [match_name] - Edit your team for a specific match (optional: specify match name).\n"
         "/addamount <match_name> <amount> - Set a bet amount for a match (e.g., /addamount LSGvsCSK 2000).\n"
         "/check - View your selected teams for all matches.\n"
@@ -46,33 +64,16 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(help_text)
 
-async def admhelp(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        await update.message.reply_text("❌ You are not authorized to use this command.")
+async def schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Display available matches for users to select."""
+    if not db["matches"]:
+        await update.message.reply_text("No matches available.")
         return
-    help_text = (
-        "Admin Commands\n\n"
-        "Here are the commands available for admins:\n"
-        "/admin - Open the admin panel to manage matches.\n"
-        "/addmatch <match_name> - Add a new match (e.g., /addmatch LSGvsCSK).\n"
-        "/addteam <match_name> <team_name> - Add a team to a match (e.g., /addteam LSGvsCSK LSG).\n"
-        "/addplayer <match_name> <team_name> <players> - Add players to a team (e.g., /addplayer LSGvsCSK LSG Player1,Player2).\n"
-        "/points <player> <points> - Assign points to a player (e.g., /points Player1 100).\n"
-        "/lockmatch <match_name> - Lock a match to prevent team edits or bets (e.g., /lockmatch LSGvsCSK).\n"
-        "/clear - Clear all data (use with caution!).\n"
-        "/announcement <message> - Broadcast a message to users (e.g., /announcement Match starts soon!).\n\n"
-        "Use /help to see user commands."
-    )
-    await update.message.reply_text(help_text)
-    
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    await update.message.reply_text(
-        f"Hello {user.first_name}, welcome to the Cricket Team Selection Bot! "
-        f"Use /schedule to get started, /profile to view your bets, or /help for commands."
-    )
+    keyboard = [[InlineKeyboardButton(m, callback_data=f"user_match_{m}")] for m in db["matches"].keys()]
+    await update.message.reply_text("Select a match:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def addamount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Allow users to place a bet for a match."""
     user_id = str(update.effective_user.id)
     if len(context.args) < 2:
         keyboard = [[InlineKeyboardButton(m, callback_data=f"addamount::{m}")] for m in db["matches"].keys()]
@@ -100,10 +101,10 @@ async def addamount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Display user's teams and bets."""
     user_id = str(update.effective_user.id)
     msg = f"📋 *Your Profile* 📋\n\n"
     
-    # Teams section
     if user_id not in db["user_teams"] or not db["user_teams"][user_id]:
         msg += "No teams selected yet.\n"
     else:
@@ -125,6 +126,7 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Display user's selected teams."""
     user_id = str(update.effective_user.id)
     if user_id not in db["user_teams"]:
         await update.message.reply_text("You haven't selected a team yet.")
@@ -133,11 +135,7 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for match, players in db["user_teams"][user_id].items():
         msg += f"{match}:\n"
         for i, p in enumerate(players):
-            role = ""
-            if i == 0:
-                role = " (Captain)"
-            elif i == 1:
-                role = " (Vice-Captain)"
+            role = " (Captain)" if i == 0 else " (Vice-Captain)" if i == 1 else ""
             msg += f"- {p}{role}\n"
         if user_id in db["amounts"] and match in db["amounts"][user_id]:
             msg += f"Bet: {db['amounts'][user_id][match]} points\n"
@@ -145,6 +143,7 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 
 async def rankings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Display user rankings based on points."""
     scores = {}
     for uid, matches in db["user_teams"].items():
         total = 0
@@ -160,98 +159,14 @@ async def rankings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         scores[uid] = total
     sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     msg = "Rankings:\n"
+    if not sorted_scores:
+        msg += "No rankings available yet."
     for i, (uid, pts) in enumerate(sorted_scores, 1):
         msg += f"{i}. User {uid} - {int(pts)} pts\n"
     await update.message.reply_text(msg)
 
-async def schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [[InlineKeyboardButton(m, callback_data=f"user_match_{m}")] for m in db["matches"].keys()]
-    await update.message.reply_text("Select a match:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def team(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await schedule(update, context)
-
-# === ADMIN COMMANDS ===
-async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        await update.message.reply_text("You are not an admin.")
-        return
-    keyboard = [[InlineKeyboardButton(m, callback_data=f"admin_match_{m}")] for m in db["matches"].keys()]
-    await update.message.reply_text("Admin Panel - Matches:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def addmatch(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id): return
-    if len(context.args) < 1: return await update.message.reply_text("Usage: /addmatch match1")
-    match = context.args[0]
-    if match in db["matches"]:
-        await update.message.reply_text("Match already exists.")
-    else:
-        db["matches"][match] = {"teams": {}, "players": []}
-        save_db()
-        await update.message.reply_text(f"Match {match} added.")
-
-async def addteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id): return
-    if len(context.args) < 2: return await update.message.reply_text("Usage: /addteam match1 teamname")
-    match, team = context.args[0], context.args[1]
-    if match not in db["matches"]: return await update.message.reply_text("Match not found.")
-    db["matches"][match]["teams"][team] = []
-    save_db()
-    await update.message.reply_text(f"Team {team} added to {match}.")
-
-async def addplayer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id): return
-    if len(context.args) < 3: return await update.message.reply_text("Usage: /addplayer match1 team (p1,p2)")
-    match, team = context.args[0], context.args[1]
-    try:
-        player_str = " ".join(context.args[2:])
-        players = [p.strip().strip("(),") for p in player_str.split(",")]
-        db["matches"][match]["teams"][team].extend(players)
-        db["matches"][match]["players"].extend(players)
-        save_db()
-        await update.message.reply_text(f"Players added to {team} in {match}: {', '.join(players)}")
-    except:
-        await update.message.reply_text("Failed to parse players.")
-
-async def points(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id): return
-    if len(context.args) < 2: return await update.message.reply_text("Usage: /points player 100")
-    player = context.args[0]
-    pts = int(context.args[1])
-    db["points"][player] = pts
-    save_db()
-    await update.message.reply_text(f"{player} got {pts} points.")
-
-async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id): return
-    db.clear()
-    db.update({"matches": {}, "user_teams": {}, "points": {}, "amounts": {}})
-    save_db()
-    await update.message.reply_text("All data cleared.")
-
-async def lock_match(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        await update.message.reply_text("❌ You are not authorized to use this command.")
-        return
-    if not context.args:
-        await update.message.reply_text("Please provide the match name to lock. Example: /lockmatch LSGvsCSK")
-        return
-    match_name = context.args[0]
-    locked_matches[match_name] = True
-    await update.message.reply_text(f"✅ Match '{match_name}' has been locked. Users can no longer edit teams or place bets.")
-
-async def announcement(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        await update.message.reply_text("❌ You are not authorized to use this command.")
-        return
-    if not context.args:
-        await update.message.reply_text("Please provide a message to announce. Example: /announcement Match LSGvsCSK starts soon!")
-        return
-    message = " ".join(context.args)
-    await update.message.reply_text(f"📢 *Announcement*: {message}", parse_mode="Markdown")
-    await update.message.reply_text("Announcement sent to the group.")
-
 async def edit_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Allow users to edit their team for a match."""
     user_id = str(update.effective_user.id)
     if not context.args:
         keyboard = [[InlineKeyboardButton(m, callback_data=f"editteam::{m}")] for m in db["matches"].keys()]
@@ -283,8 +198,235 @@ async def edit_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
+# === ADMIN COMMANDS ===
+async def admhelp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Display admin commands."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+    help_text = (
+        "Admin Commands\n\n"
+        "Here are the commands available for admins:\n"
+        "/admin - Open the admin panel to manage matches.\n"
+        "/addmatch <match_name> - Add a new match (e.g., /addmatch LSGvsCSK).\n"
+        "/addteam <match_name> <team_name> - Add a team to a match (e.g., /addteam LSGvsCSK LSG).\n"
+        "/addplayer <match_name> <team_name> <players> - Add players to a team (e.g., /addplayer LSGvsCSK LSG Player1,Player2).\n"
+        "/points <player> <points> - Assign points to a player (e.g., /points Player1 100).\n"
+        "/lockmatch <match_name> - Lock a match to prevent team edits or bets (e.g., /lockmatch LSGvsCSK).\n"
+        "/clear - Clear all data (use with caution!).\n"
+        "/announcement <group_id> <message> - Send a message to a specific group (e.g., /announcement -100123456789 Match starts soon!).\n"
+        "/target <user_id> <message> - Send a message to a specific user (e.g., /target 123456789 Your team is ready!).\n"
+        "/team - View all users' teams with their user IDs for verification.\n"
+        "/backup - Download the match data as a JSON file.\n\n"
+        "Use /help to see user commands."
+    )
+    await update.message.reply_text(help_text)
+
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Open the admin panel to manage matches."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+    keyboard = [[InlineKeyboardButton(m, callback_data=f"admin_match_{m}")] for m in db["matches"].keys()]
+    await update.message.reply_text("Admin Panel - Matches:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def addmatch(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Add a new match."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+    if len(context.args) < 1:
+        await update.message.reply_text("Usage: /addmatch <match_name>")
+        return
+    match = context.args[0]
+    if match in db["matches"]:
+        await update.message.reply_text("Match already exists.")
+    else:
+        db["matches"][match] = {"teams": {}, "players": []}
+        save_db()
+        await update.message.reply_text(f"Match {match} added.")
+
+async def addteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Add a team to a match."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: /addteam <match_name> <team_name>")
+        return
+    match, team = context.args[0], context.args[1]
+    if match not in db["matches"]:
+        await update.message.reply_text("Match not found.")
+        return
+    db["matches"][match]["teams"][team] = []
+    save_db()
+    await update.message.reply_text(f"Team {team} added to {match}.")
+
+async def addplayer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Add players to a team."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+    if len(context.args) < 3:
+        await update.message.reply_text("Usage: /addplayer <match_name> <team_name> <player1,player2,...>")
+        return
+    match, team = context.args[0], context.args[1]
+    if match not in db["matches"]:
+        await update.message.reply_text("Match not found.")
+        return
+    try:
+        player_str = " ".join(context.args[2:])
+        players = [p.strip().strip("(),") for p in player_str.split(",")]
+        db["matches"][match]["teams"][team].extend(players)
+        db["matches"][match]["players"].extend(players)
+        save_db()
+        await update.message.reply_text(f"Players added to {team} in {match}: {', '.join(players)}")
+    except Exception as e:
+        logger.error(f"Failed to add players: {e}")
+        await update.message.reply_text("Failed to parse players.")
+
+async def points(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Assign points to a player."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: /points <player> <points>")
+        return
+    player, pts = context.args[0], context.args[1]
+    try:
+        pts = int(pts)
+        db["points"][player] = pts
+        save_db()
+        await update.message.reply_text(f"{player} got {pts} points.")
+    except ValueError:
+        await update.message.reply_text("Points must be a number.")
+
+async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Clear all data."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+    db.clear()
+    db.update({"matches": {}, "user_teams": {}, "points": {}, "amounts": {}})
+    save_db()
+    await update.message.reply_text("All data cleared.")
+
+async def lock_match(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Lock a match to prevent edits or bets."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /lockmatch <match_name>")
+        return
+    match_name = context.args[0]
+    if match_name not in db["matches"]:
+        await update.message.reply_text("Match not found.")
+        return
+    locked_matches[match_name] = True
+    await update.message.reply_text(f"✅ Match '{match_name}' has been locked.")
+
+async def announcement(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send a message to a specific group."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: /announcement <group_id> <message>")
+        return
+    group_id = context.args[0]
+    message = " ".join(context.args[1:])
+    try:
+        group_id = int(group_id)
+        await context.bot.send_message(
+            chat_id=group_id,
+            text=f"📢 *Announcement*: {message}",
+            parse_mode="Markdown"
+        )
+        await update.message.reply_text(f"Announcement sent to group {group_id}.")
+    except ValueError:
+        await update.message.reply_text("Invalid group ID. It must be a number (e.g., -100123456789).")
+    except TelegramError as e:
+        logger.error(f"Failed to send announcement to group {group_id}: {e}")
+        await update.message.reply_text(f"Failed to send announcement: {e.message}")
+
+async def target(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send a message to a specific user."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: /target <user_id> <message>")
+        return
+    user_id = context.args[0]
+    message = " ".join(context.args[1:])
+    try:
+        user_id = int(user_id)
+        # Check if the user has interacted with the bot
+        if str(user_id) not in db["user_teams"] and str(user_id) not in db["amounts"]:
+            await update.message.reply_text("User has not interacted with the bot.")
+            return
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=f"📩 *Message from Admin*: {message}",
+            parse_mode="Markdown"
+        )
+        await update.message.reply_text(f"Message sent to user {user_id}.")
+    except ValueError:
+        await update.message.reply_text("Invalid user ID. It must be a number (e.g., 123456789).")
+    except TelegramError as e:
+        logger.error(f"Failed to send message to user {user_id}: {e}")
+        await update.message.reply_text(f"Failed to send message: {e.message}")
+
+async def team(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Display all users' teams with user IDs for admin verification."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+    
+    if not db["user_teams"]:
+        await update.message.reply_text("No users have selected teams yet.")
+        return
+    
+    msg = "📋 *User Teams for Verification* 📋\n\n"
+    for user_id, matches in db["user_teams"].items():
+        msg += f"User ID: {user_id}\n"
+        for match, players in matches.items():
+            msg += f"  Match: {match}\n"
+            if not players:
+                msg += "    No players selected.\n"
+            else:
+                for i, player in enumerate(players):
+                    role = " (Captain)" if i == 0 else " (Vice-Captain)" if i == 1 else ""
+                    msg += f"    - {player}{role}\n"
+                if user_id in db["amounts"] and match in db["amounts"][user_id]:
+                    msg += f"    Bet: {db['amounts'][user_id][match]} points\n"
+            msg += "\n"
+        msg += "-" * 20 + "\n"
+    
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+async def backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Download the match data JSON file."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+    
+    try:
+        with open(DATA_FILE, "rb") as f:
+            await update.message.reply_document(
+                document=f,
+                filename="match_data_backup.json",
+                caption="Here is the backup of the match data."
+            )
+    except Exception as e:
+        logger.error(f"Failed to send backup: {e}")
+        await update.message.reply_text("❌ Failed to generate backup. Please try again later.")
+
 # === CALLBACK HANDLER ===
 async def user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle inline button callbacks."""
     query = update.callback_query
     await query.answer()
     data = query.data
@@ -434,8 +576,9 @@ async def user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("Add Bet", callback_data=f"addamount::{match}")]
         ]
         await query.edit_message_text(f"Match: {match}", reply_markup=InlineKeyboardMarkup(keyboard))
-        
+
 def main():
+    """Run the bot."""
     application = Application.builder().token(BOT_TOKEN).build()
 
     # Command Handlers
@@ -443,7 +586,6 @@ def main():
     application.add_handler(CommandHandler("help", help))
     application.add_handler(CommandHandler("admhelp", admhelp))
     application.add_handler(CommandHandler("schedule", schedule))
-    application.add_handler(CommandHandler("team", team))
     application.add_handler(CommandHandler("addmatch", addmatch))
     application.add_handler(CommandHandler("addteam", addteam))
     application.add_handler(CommandHandler("addplayer", addplayer))
@@ -451,11 +593,14 @@ def main():
     application.add_handler(CommandHandler("clear", clear))
     application.add_handler(CommandHandler("lockmatch", lock_match))
     application.add_handler(CommandHandler("announcement", announcement))
+    application.add_handler(CommandHandler("target", target))
     application.add_handler(CommandHandler("rankings", rankings))
     application.add_handler(CommandHandler("check", check))
     application.add_handler(CommandHandler("editteam", edit_team))
     application.add_handler(CommandHandler("addamount", addamount))
     application.add_handler(CommandHandler("profile", profile))
+    application.add_handler(CommandHandler("team", team))
+    application.add_handler(CommandHandler("backup", backup))
 
     # Callback Handler
     application.add_handler(CallbackQueryHandler(user_callback))
