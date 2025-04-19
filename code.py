@@ -6,7 +6,7 @@ from telegram.error import TelegramError
 
 # Configuration
 ADMIN_IDS = [6293126201, 5460768109, 5220416927]
-BOT_TOKEN = "6634790910:AAEj1u5RcH3akulecoXXrWE2cOPzrXlstY4"
+BOT_TOKEN = "8024871818:AAESCglln2EI_T7tGV-7vaxpJafjz8Jhd0"
 DATA_FILE = "match_data.json"
 
 # Logging setup
